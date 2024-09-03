@@ -86,7 +86,12 @@ function Download-IntegrationScript {
     $destinationPath = "integration.py"
 
     try {
+        # Download the integration script
         Invoke-WebRequest -Uri $githubFileUrl -OutFile $destinationPath -ErrorAction Stop
+        # Download the limited use license agreement
+        Invoke-WebRequest -Uri "https://raw.githubusercontent.com/secops-esc20/Threat-Engine-Integrations/main/Fortinet%20Web/LICENSE.txt" -OutFile "LICENSE.txt"
+        #Download the readme
+        Invoke-WebRequest -Uri "https://raw.githubusercontent.com/secops-esc20/Threat-Engine-Integrations/main/Fortinet%20Web/README.txt" -OutFile "README.txt"
         Write-Host "File downloaded successfully to $destinationPath"
     } catch {
         Write-Host "Error: Failed to download the integration script. $_" -ForegroundColor Red
@@ -140,6 +145,32 @@ function Display-Help {
     Write-Host "Example: \.install.ps1 -update "
 }
 
+# Create a Task Scheduler event
+function createTask {
+    param(
+        [string]$scriptName,
+        [string]$taskName,
+        [string]$taskDescription
+    )
+    try{
+        # Create the task parameters
+        $pythonPath = (Get-Command python).Source
+        $currentDirectory = Get-Location
+        $scriptPath = '"' + (Join-Path -Path $currentDirectory -ChildPath $scriptName) + '"'
+        $action = New-ScheduledTaskAction -Execute $pythonPath -Argument $scriptPath -WorkingDirectory $currentDirectory
+        $trigger = New-ScheduledTaskTrigger -Daily -At 12am
+        $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -DontStopOnIdleEnd
+        $userSID = (Get-WmiObject -Class Win32_UserAccount -Filter "Name='$env:USERNAME'").SID
+        $principal = New-ScheduledTaskPrincipal -UserId $userSID -LogonType S4U -RunLevel Highest
+        
+        # Register the task
+        Register-ScheduledTask -Action $action -Trigger $trigger -TaskName $taskName -Description $taskDescription -Settings $settings -Principal $principal
+        Write-Host "Scheduled task '$taskName' created."
+    }
+    catch {
+        Write-Host "Error creating scheduled task: $_"
+    }    
+}
 
 function main {
     # Download the integration script from github
@@ -171,19 +202,17 @@ function main {
     # Install required Python libraries
     Write-Host "Installing required Python libraries..."
     Install-PythonLibraries
+    
+    # Have the user input the time for the sync to occur daily
+    $triggerTime = Read-Host -Prompt "Enter the time you'd like the daily sync to occur at (Ex 12am): "
+    
+    # Create the recurring task to automatically run the sync
+    Write-Host "Create the MISP->Fortigate task scheduler event."
+    createTask -taskName "MISP-Fortigate-Sync" -scriptName "integration.py" -taskDescription "Runs MISP->Fortigate integration daily."
 
-    # Create a Task Scheduler event to run integration.py daily at 12 AM
-    $pythonPath = (Get-Command python).Source
-    $currentDirectory = Get-Location
-    $scriptPath = '"' + (Join-Path -Path $currentDirectory -ChildPath "integration.py") + '"'
-    $taskName = "MISP-Fortigate-Sync"
-    $action = New-ScheduledTaskAction -Execute $pythonPath -Argument $scriptPath
-    $trigger = New-ScheduledTaskTrigger -Daily -At 12:00AM
-    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
-
-    # Register the task
-    Register-ScheduledTask -Action $action -Trigger $trigger -TaskName $taskName -Description "Runs MISP->Fortigate integration daily at 12 AM" -Settings $settings
-    Write-Host "Scheduled task '$taskName' created."
+    # Create the recurring task to automatically run the sync
+    Write-Host "Create the automatic updates task scheduler event."
+    createTask -taskName "MISP-Fortigate-Integration-Updater" -scriptName "install.ps1 -update" -taskDescription "Runs MISP->Fortigate integration updater daily."
 }
 
 # If no arguments were passed, run main
