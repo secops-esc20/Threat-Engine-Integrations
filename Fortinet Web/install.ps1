@@ -55,11 +55,30 @@ function Install-Python {
         # Clean up the installer file
         Remove-Item $installerPath
         Write-Host "Python has been installed successfully."
+
     } catch {
         Write-Host "Error: Failed to download or install Python. $_" -ForegroundColor Red
         exit 1
     }
 }
+
+# Function to add python to the system path var
+function add_python_to_path {
+    # Check if python.exe is in the PATH
+    $pythonPath = [System.Environment]::GetEnvironmentVariable('PATH', [System.EnvironmentVariableTarget]::Machine)
+    $userProfile = $env:USERPROFILE
+    $pythonExePath = "$userProfile\AppData\Local\Programs\Python\Python312"
+
+    if ($pythonPath -notlike "*$pythonExePath*") {
+        # Add python.exe to the system PATH if it's not already there
+        $newPath = "$pythonPath;$pythonExePath"
+        [System.Environment]::SetEnvironmentVariable('PATH', $newPath, [System.EnvironmentVariableTarget]::Machine)
+        Write-Host "Python path has been added to the system PATH."
+    } else {
+        Write-Host "Python is already in the system PATH."
+    }
+}
+
 
 # Function to install required Python libraries
 function Install-PythonLibraries {
@@ -176,20 +195,25 @@ function main {
     # Download the integration script from github
     Download-IntegrationScript -url "https://raw.githubusercontent.com/secops-esc20/Threat-Engine-Integrations/main/Fortinet%20Web/integration.py"
 
-    # Get the Fortigate parameters and create the config file
+    # Get the Fortigate parameters
     $fg_path = Read-Host -Prompt "Enter the Fortigate URL: "
     $fg_vdom = Read-Host -Prompt "Enter the Fortigate VDOM: "
-    Create-ConfigFile -fg_path $fg_path -fg_vdom $fg_vdom
 
     # Store API keys in Windows Credential Manager
     Add-ApiTokenToWCM -PromptMessage "Enter Fortigate API key" -TargetName "forti-api" -UserName "forti-api"
     Add-ApiTokenToWCM -PromptMessage "Enter MISP API key" -TargetName "misp-api" -UserName "misp-api"
+
+    # Create the configuration file based on the user input
+    Create-ConfigFile -fg_path $fg_path -fg_vdom $fg_vdom
 
     # Check if Python is installed, if not, install it
     if (-not (Check-PythonInstalled)) {
         Write-Host "Python is not installed. Proceeding with installation..."
         Install-Python
     }
+
+    # Make sure python is part of the system path variable
+    add_python_to_path
 
     # Update pip
     try {
