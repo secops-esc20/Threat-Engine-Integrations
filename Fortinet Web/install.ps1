@@ -66,10 +66,10 @@ function Install-Python {
 function add_python_to_path {
     # Check if python.exe is in the PATH
     $pythonPath = [System.Environment]::GetEnvironmentVariable('PATH', [System.EnvironmentVariableTarget]::Machine)
-    $userProfile = $env:USERPROFILE
-    $pythonExePath = "$userProfile\AppData\Local\Programs\Python\Python312"
+    # $userProfile = $env:USERPROFILE
+    $pythonExePath = "C:\Program Files\Python312"
 
-    if ($pythonPath -notlike "*$pythonExePath*") {
+    if ($pythonPath -notcontains "*$pythonExePath*") {
         # Add python.exe to the system PATH if it's not already there
         $newPath = "$pythonPath;$pythonExePath"
         [System.Environment]::SetEnvironmentVariable('PATH', $newPath, [System.EnvironmentVariableTarget]::Machine)
