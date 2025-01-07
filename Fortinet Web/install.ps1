@@ -1,3 +1,20 @@
+# Function to determine the currenlty supported TLS version
+function check_tls_ver {
+    # Get the currently supported TLS version(s)
+    $currentTLS = [Net.ServicePointManager]::SecurityProtocol
+
+    # Check if TLS 1.0 or TLS 1.1 is included
+    if ($currentTLS -band [Net.SecurityProtocolType]::Tls -or $currentTLS -band [Net.SecurityProtocolType]::Tls11) {
+        Write-Host "WARNING: TLS 1.0 or 1.1 is currently enabled. Both version are deprecated and should be disabled." -ForegroundColor Red
+        Write-Host "TLS 1.2 or 1.3 is required for this application to function securly. TLS 1.3 requires PowerShell Core (7+) with .NET Core/6+" -ForegroundColor Red
+        Write-Host "You can enable TLS 1.2/1.3 using one of the following commands:" -ForegroundColor Red
+        Write-Host " # [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12" -ForegroundColor Red
+        Write-Host " # [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls13" -ForegroundColor Red
+        exit 1
+    }
+}
+
+
 # Function to add API tokens to Windows Credential Manager (WCM)
 function Add-ApiTokenToWCM {
     param(
@@ -55,30 +72,11 @@ function Install-Python {
         # Clean up the installer file
         Remove-Item $installerPath
         Write-Host "Python has been installed successfully."
-
     } catch {
         Write-Host "Error: Failed to download or install Python. $_" -ForegroundColor Red
         exit 1
     }
 }
-
-# Function to add python to the system path var
-function add_python_to_path {
-    # Check if python.exe is in the PATH
-    $pythonPath = [System.Environment]::GetEnvironmentVariable('PATH', [System.EnvironmentVariableTarget]::Machine)
-    # $userProfile = $env:USERPROFILE
-    $pythonExePath = "C:\Program Files\Python312"
-
-    if ($pythonPath -notcontains "*$pythonExePath*") {
-        # Add python.exe to the system PATH if it's not already there
-        $newPath = "$pythonPath;$pythonExePath"
-        [System.Environment]::SetEnvironmentVariable('PATH', $newPath, [System.EnvironmentVariableTarget]::Machine)
-        Write-Host "Python path has been added to the system PATH."
-    } else {
-        Write-Host "Python is already in the system PATH."
-    }
-}
-
 
 # Function to install required Python libraries
 function Install-PythonLibraries {
@@ -132,7 +130,7 @@ function Create-ConfigFile {
   "fg_path": "$fg_path",
   "fg_vdom": "$fg_vdom",
   "fg_wcm_id": "forti-api",
-  "misp_path": "https://reg20misp02.esc20.com",
+  "misp_path": "https://threatengine2.esc20.net",
   "misp_wcm_id": "misp-api",
   "log_file_path": "logs/",
   "type": "url",
@@ -191,29 +189,74 @@ function createTask {
     }    
 }
 
+function uninstall {
+    # Confirm Uninstall
+    $answer = Read-Host -Prompt "Proceed with uninstall? (Y/N)"
+    if ($answer -match '^(Y|y|yes)$') {
+        Write-Host "Proceeding with uninstall."
+    } else {
+        Write-Host "Aborting uninstall."
+        exit 1
+    }
+    
+    # Delete the sync task
+    if (Get-ScheduledTask -TaskName "MISP-Fortigate-Sync" -ErrorAction SilentlyContinue) {
+        Write-Host "Deleting scheduled task: MISP-Fortigate-Sync"
+        Unregister-ScheduledTask -TaskName "MISP-Fortigate-Sync" -Confirm:$false
+    } else {
+        Write-Host "Scheduled task 'MISP-Fortigate-Sync' not found."
+    }
+    
+    # Delete the updater task
+    if (Get-ScheduledTask -TaskName "MISP-Fortigate-Integration-Updater" -ErrorAction SilentlyContinue) {
+        Write-Host "Deleting scheduled task: MISP-Fortigate-Integration-Updater"
+        Unregister-ScheduledTask -TaskName "MISP-Fortigate-Integration-Updater" -Confirm:$false
+    } else {
+        Write-Host "Scheduled task 'MISP-Fortigate-Integration-Updater' not found."
+    }
+    
+    # Uninstall all Python versions
+    Write-Host "Uninstalling Python versions..."
+    Get-WmiObject -Class Win32_Product | Where-Object { $_.Name -like "*Python*" } | ForEach-Object {
+        Write-Host "Uninstalling: $($_.Name)"
+        $_.Uninstall() | Out-Null
+    }
+    
+    # Delete the integration script and text files
+    $filesToDelete = @("integration.py", "*.txt", "*.json")
+    foreach ($file in $filesToDelete) {
+        if (Test-Path $file) {
+            Write-Host "Deleting file: $file"
+            Remove-Item $file -Force
+        } else {
+            Write-Host "File not found: $file"
+        }
+    }
+    
+    Write-Host "Uninstallation completed."
+}
+
 function main {
+    # Ensure TLS 1.2 or 1.3 is configured, abort if not
+    check_tls_ver
+    
     # Download the integration script from github
     Download-IntegrationScript -url "https://raw.githubusercontent.com/secops-esc20/Threat-Engine-Integrations/main/Fortinet%20Web/integration.py"
 
-    # Get the Fortigate parameters
-    $fg_path = Read-Host -Prompt "Enter the Fortigate URL: "
-    $fg_vdom = Read-Host -Prompt "Enter the Fortigate VDOM: "
+    # Get the Fortigate parameters and create the config file
+    $fg_path = Read-Host -Prompt "Enter the Fortigate URL"
+    $fg_vdom = Read-Host -Prompt "Enter the Fortigate VDOM"
+    Create-ConfigFile -fg_path $fg_path -fg_vdom $fg_vdom
 
     # Store API keys in Windows Credential Manager
     Add-ApiTokenToWCM -PromptMessage "Enter Fortigate API key" -TargetName "forti-api" -UserName "forti-api"
     Add-ApiTokenToWCM -PromptMessage "Enter MISP API key" -TargetName "misp-api" -UserName "misp-api"
-
-    # Create the configuration file based on the user input
-    Create-ConfigFile -fg_path $fg_path -fg_vdom $fg_vdom
 
     # Check if Python is installed, if not, install it
     if (-not (Check-PythonInstalled)) {
         Write-Host "Python is not installed. Proceeding with installation..."
         Install-Python
     }
-
-    # Make sure python is part of the system path variable
-    add_python_to_path
 
     # Update pip
     try {
@@ -228,7 +271,7 @@ function main {
     Install-PythonLibraries
     
     # Have the user input the time for the sync to occur daily
-    $triggerTime = Read-Host -Prompt "Enter the time you'd like the daily sync to occur at (Ex 12am): "
+    $triggerTime = Read-Host -Prompt "Enter the time you'd like the daily sync to occur at (Ex 12am)"
     
     # Create the recurring task to automatically run the sync
     Write-Host "Create the MISP->Fortigate task scheduler event."
@@ -253,7 +296,7 @@ elseif ($args[0] -eq "-update"){
     Download-IntegrationScript
 }
 elseif ($args[0] -eq "-uninstall"){
-    Write-Host "Uninstalling..."
+    uninstall
 }
 elseif ($args[0] -eq "-update-misp-apikey"){
     Add-ApiTokenToWCM -PromptMessage "Enter MISP API key" -TargetName "misp-api" -UserName "misp-api"
