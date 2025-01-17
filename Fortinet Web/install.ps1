@@ -134,7 +134,9 @@ function Create-ConfigFile {
   "misp_wcm_id": "misp-api",
   "log_file_path": "logs/",
   "type": "url",
-  "last": "1d"
+  "last": "1d",
+  "filter": "",
+  "exclude": ""
 }
 "@
 
