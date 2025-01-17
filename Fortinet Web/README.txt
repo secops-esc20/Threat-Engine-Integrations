@@ -33,6 +33,8 @@ misp_wcm_id: The identifier used in the Windows Credential Manager to retrieve t
 log_file_path: The path where log files will be stored. The script will create a new log file each time it runs.
 type: The type of IOCs to retrieve (e.g., url).
 last: The time frame for retrieving recent IOCs (e.g., 1d for the last day).
+filter: used to specify which objects to include (ex: ["filer": "'org': 'ESC20'"] #Filters results to only inlcude ESC20 feeds)
+exclude: for future use
 
 Windows Credential Manager
 --------------------------
