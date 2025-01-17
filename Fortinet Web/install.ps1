@@ -100,16 +100,16 @@ function Download-IntegrationScript {
     [string]$url
     )
     $githubFileUrl = $url
-    $destinationPath = "integration.py"
 
     try {
         # Download the integration script
-        Invoke-WebRequest -Uri $githubFileUrl -OutFile $destinationPath -ErrorAction Stop
+        Invoke-WebRequest -Uri "https://raw.githubusercontent.com/secops-esc20/Threat-Engine-Integrations/main/Fortinet%20Web/integration.py" -OutFile "integration.py" -ErrorAction Stop
+	Write-Host "File downloaded successfully to $destinationPath"
         # Download the limited use license agreement
         Invoke-WebRequest -Uri "https://raw.githubusercontent.com/secops-esc20/Threat-Engine-Integrations/main/Fortinet%20Web/LICENSE.txt" -OutFile "LICENSE.txt"
         #Download the readme
         Invoke-WebRequest -Uri "https://raw.githubusercontent.com/secops-esc20/Threat-Engine-Integrations/main/Fortinet%20Web/README.txt" -OutFile "README.txt"
-        Write-Host "File downloaded successfully to $destinationPath"
+        
     } catch {
         Write-Host "Error: Failed to download the integration script. $_" -ForegroundColor Red
         exit 1
@@ -161,6 +161,7 @@ function Display-Help {
     Write-Host "  -uninstall: uninstall python and remove the task scheduler task."
     Write-Host "  -update-misp-apikey: update the WCM entry for misp-api."
     Write-Host "  -update-forti-apikey: update the WCM entry for forti-api."
+    Write-Host "  -recreate-task-events: purge and recreate the task scheduler tasks."
     Write-Host "Example: \.install.ps1 -update "
 }
 
@@ -169,14 +170,15 @@ function createTask {
     param(
         [string]$scriptName,
         [string]$taskName,
-        [string]$taskDescription
+        [string]$taskDescription,
+        [string]$program,
+        [string]$path
     )
     try{
         # Create the task parameters
-        $pythonPath = (Get-Command python).Source
         $currentDirectory = Get-Location
-        $scriptPath = '"' + (Join-Path -Path $currentDirectory -ChildPath $scriptName) + '"'
-        $action = New-ScheduledTaskAction -Execute $pythonPath -Argument $scriptPath -WorkingDirectory $currentDirectory
+        $scriptPath = '"' + (Join-Path -Path $path -ChildPath $scriptName) + '"'
+        $action = New-ScheduledTaskAction -Execute $program -Argument $scriptPath -WorkingDirectory $currentDirectory
         $trigger = New-ScheduledTaskTrigger -Daily -At 12am
         $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -DontStopOnIdleEnd
         $userSID = (Get-WmiObject -Class Win32_UserAccount -Filter "Name='$env:USERNAME'").SID
@@ -239,6 +241,8 @@ function uninstall {
 }
 
 function main {
+    $currentDirectory = Get-Location
+    
     # Ensure TLS 1.2 or 1.3 is configured, abort if not
     check_tls_ver
     
@@ -277,11 +281,11 @@ function main {
     
     # Create the recurring task to automatically run the sync
     Write-Host "Create the MISP->Fortigate task scheduler event."
-    createTask -taskName "MISP-Fortigate-Sync" -scriptName "integration.py" -taskDescription "Runs MISP->Fortigate integration daily."
+    createTask -taskName "MISP-Fortigate-Sync" -scriptName "integration.py" -taskDescription "Runs MISP->Fortigate integration daily." -program(Get-Command python).Source -path $currentDirectory
 
-    # Create the recurring task to automatically run the sync
+    # Create the recurring task to automatically check for updates
     Write-Host "Create the automatic updates task scheduler event."
-    createTask -taskName "MISP-Fortigate-Integration-Updater" -scriptName "install.ps1 -update" -taskDescription "Runs MISP->Fortigate integration updater daily."
+    createTask -taskName "MISP-Fortigate-Integration-Updater" -scriptName "install.ps1 -update" -taskDescription "Runs MISP->Fortigate integration updater daily." -program "powershell" -path ".\"
 }
 
 # If no arguments were passed, run main
@@ -305,6 +309,31 @@ elseif ($args[0] -eq "-update-misp-apikey"){
 }
 elseif ($args[0] -eq "-update-forti-apikey"){
     Add-ApiTokenToWCM -PromptMessage "Enter Fortigate API key" -TargetName "forti-api" -UserName "forti-api"
+}
+elseif ($args[0] -eq "-recreate-task-events"){
+    # Delete the sync task
+    if (Get-ScheduledTask -TaskName "MISP-Fortigate-Sync" -ErrorAction SilentlyContinue) {
+        Write-Host "Deleting scheduled task: MISP-Fortigate-Sync"
+        Unregister-ScheduledTask -TaskName "MISP-Fortigate-Sync" -Confirm:$false
+    } else {
+        Write-Host "Scheduled task 'MISP-Fortigate-Sync' not found."
+    }
+    
+    # Delete the updater task
+    if (Get-ScheduledTask -TaskName "MISP-Fortigate-Integration-Updater" -ErrorAction SilentlyContinue) {
+        Write-Host "Deleting scheduled task: MISP-Fortigate-Integration-Updater"
+        Unregister-ScheduledTask -TaskName "MISP-Fortigate-Integration-Updater" -Confirm:$false
+    } else {
+        Write-Host "Scheduled task 'MISP-Fortigate-Integration-Updater' not found."
+    }
+    
+    # Create the recurring task to automatically run the sync
+    Write-Host "Create the MISP->Fortigate task scheduler event."
+    createTask -taskName "MISP-Fortigate-Sync" -scriptName "integration.py" -taskDescription "Runs MISP->Fortigate integration daily." -program(Get-Command python).Source -path $currentDirectory
+
+    # Create the recurring task to automatically check for updates
+    Write-Host "Create the automatic updates task scheduler event."
+    createTask -taskName "MISP-Fortigate-Integration-Updater" -scriptName "install.ps1 -update" -taskDescription "Runs MISP->Fortigate integration updater daily." -program "powershell" -path ".\"
 }
 else {
     Write-Host "Error! Unknown argument, use -help for assistance."
