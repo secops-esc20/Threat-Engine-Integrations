@@ -3,6 +3,7 @@ import json
 import keyring
 import sys 
 import os
+import re
 from datetime import datetime
 
 
@@ -72,7 +73,7 @@ def validate_config_params(config_params, required_params):
         for param in required_params:
             if param not in config_params:
                 missing_params.append(param)
-            elif config_params[param] == '':
+            elif config_params[param] == '' and param not in ['filter', 'exclude']: #filter and exclude are optional and by default are empty
                 missing_params.append(param)
         
         # If not, log the missing parameters and exit
@@ -86,7 +87,16 @@ def validate_config_params(config_params, required_params):
 # Pull a list of MISP IOCs that have been published in the past X hours
 def get_misp_iocs():
     try:
-        response = requests.post(f'{misp_url}/attributes/restSearch', headers=misp_headers, json={'type': config_params['type'], 'published': 'true', 'last': config_params['last']}, verify=False)
+        #Check if a custom filter was defined in the config
+        if config_params['filter'] == "":
+            q_filter = "{" + f'"type": "{config_params["type"]}", "published": true, "last": "{config_params["last"]}"' + "}"
+        else:
+            q_filter = "{" + f'"type": "{config_params["type"]}", "published": true, "last": "{config_params["last"]}", {config_params["filter"].replace("'", '"')}' + "}"
+
+        # Pull IOCs based on query filters
+        response = requests.post(f'{misp_url}/attributes/restSearch', headers=misp_headers, json=json.loads(q_filter), verify=False)
+        print(response.text)
+        
         # If the response failed or returned an unexpected result
         if not response.ok or 'response' not in response.json():
             log('Error: unable to retrieve IOCs from MISP!')
@@ -121,18 +131,40 @@ def validate(attributes):
             ioc.append([attribute['value'], attribute['Event']['info']])
     return ioc
 
+# Make sure the URL format is valid    
+def is_valid_url(url):
+    # Define the regex pattern for a valid URL
+    url_pattern = re.compile(r'^(https?:\/\/)?'          # Optional scheme (http or https)
+                             r'(([\w\-]+\.)+[\w\-]{2,})' # Domain name
+                             r'(\:\d+)?'                 # Optional port
+                             r'(\/[\w\-.~]*)*'           # Optional path
+                             r'(\?[\w\-.~&=]*)?'         # Optional query
+                             r'(#[\w\-]*)?$',            # Optional fragment
+                             re.IGNORECASE)
+
+    # Use the regex to check the URL
+    return re.match(url_pattern, url) is not None
+
 # Extract the domain(s) from the URLs and remove duplicates
 def extract_domain(ioc):
     domains = []
     for url in ioc:
-        tmp = url[0]
-        tmp = tmp.replace('https://', '')
-        tmp = tmp.replace('http://', '')
-        if tmp.find('/') > -1:
-            url[0] = tmp[ : tmp.find('/')]
-        
-        # Remove duplicates
-        if [url[0],url[1]] not in domains:
+        ''' I was using this to help remove duplicates 
+            and compress results to avoid pushing 100
+            URLs that shared the same domain. It's
+            wastefull but the data we recieve is so 
+            inconsistant it wasn't worth the effort.
+        if is_valid_url(url[0]):
+            tmp = url[0] 
+            tmp = tmp.replace('https://', '')
+            tmp = tmp.replace('http://', '')
+            if tmp.find('/') > -1:
+                url[0] = tmp[ : tmp.find('/')]
+            else: url[0] = tmp
+        else: log(f"Error, invalid URL: {url[0]}")
+        '''
+        # Ensure the URL structure is valid and remove duplicates
+        if is_valid_url(url[0]) and [url[0],url[1]] not in domains:
             domains.append([url[0],url[1]])
     return domains
     
@@ -172,7 +204,7 @@ with create_log_file(today) as log_file:
     log(datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
 
     # Define the required config params
-    required_params = ['fg_path', 'fg_wcm_id', 'fg_vdom', 'misp_path', 'misp_wcm_id', 'last', 'type']
+    required_params = ['fg_path', 'fg_wcm_id', 'fg_vdom', 'misp_path', 'misp_wcm_id', 'last', 'type', 'filter', 'exclude']
 
     # Make sure the required params are present in config.json
     validate_config_params(config_params, required_params)
