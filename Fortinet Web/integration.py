@@ -255,7 +255,7 @@ with create_log_file(today) as log_file:
     log(f'  Upload IOCs: {len(domains) - counter}')
 
     #Upload the domains to the fortinet webfilter
-    if len(domains) > 0 and False:
+    if len(domains) > 0:
         for domain in domains:
             
             # Create the API parms and body
