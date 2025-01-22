@@ -92,10 +92,10 @@ def get_misp_iocs():
             q_filter = "{" + f'"type": "{config_params["type"]}", "published": true, "last": "{config_params["last"]}"' + "}"
         else:
             q_filter = "{" + f'"type": "{config_params["type"]}", "published": true, "last": "{config_params["last"]}", {config_params["filter"].replace("'", '"')}' + "}"
-
+        log(f"Query filter: {q_filter}")
+        
         # Pull IOCs based on query filters
         response = requests.post(f'{misp_url}/attributes/restSearch', headers=misp_headers, json=json.loads(q_filter), verify=False)
-        print(response.text)
         
         # If the response failed or returned an unexpected result
         if not response.ok or 'response' not in response.json():
@@ -143,17 +143,20 @@ def is_valid_url(url):
                              re.IGNORECASE)
 
     # Use the regex to check the URL
-    return re.match(url_pattern, url) is not None
+    valid = re.match(url_pattern, url) is not None
+    if not valid:
+        log(f"Invalid URL format: {url}")
+    return valid
 
 # Extract the domain(s) from the URLs and remove duplicates
 def extract_domain(ioc):
     domains = []
     for url in ioc:
-        ''' I was using this to help remove duplicates 
-            and compress results to avoid pushing 100
-            URLs that shared the same domain. It's
-            wastefull but the data we recieve is so 
-            inconsistant it wasn't worth the effort.
+        ''' # I was using this to help remove duplicates 
+            # and compress results to avoid pushing 100
+            # URLs that shared the same domain because 
+            # It's wastefull but the data we recieve is 
+            # so inconsistant it wasn't worth the effort.
         if is_valid_url(url[0]):
             tmp = url[0] 
             tmp = tmp.replace('https://', '')
@@ -252,7 +255,7 @@ with create_log_file(today) as log_file:
     log(f'  Upload IOCs: {len(domains) - counter}')
 
     #Upload the domains to the fortinet webfilter
-    if len(domains) > 0:
+    if len(domains) > 0 and False:
         for domain in domains:
             
             # Create the API parms and body
