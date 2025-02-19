@@ -1,48 +1,61 @@
-import requests
-import json
-import keyring
-import sys 
 import os
 import re
+import sys
+import json
 from datetime import datetime
 
+import requests
+import keyring
+
+from typing import TextIO
+
+"""
+Threat Intelligence Integration Script
+--------------------------------------
+This script integrates with MISP (Malware Information Sharing Platform) to retrieve and validate 
+Indicators of Compromise (IOCs) and update a security appliance’s blocklist.
+
+Author: Samuel Bravo  
+Date: February 2025  
+"""
+
 # Logging function
-def log(message):
+def log(message: str) -> None:
     try:
         log_file.write(message + "\n")
         print(message)
     except: pass
 
 # Retrieve the API token from the local Windows Credential Manager database
-def get_creds(service_id):
+def get_creds(service_id: str) -> tuple[str, str]:
     try:
-        password = keyring.get_credential(service_id, None)
-        if not isinstance(password, keyring.credentials.SimpleCredential):
+        creds = keyring.get_credential(service_id, None)
+        if not isinstance(creds, keyring.credentials.SimpleCredential):
             log(f'Error: Windows Credentials Manager does not have an entry for Service_ID [{service_id}]')
             log('Either correct the ID in config.json or upload the API token(s) to WCM.')
             sys.exit(1)
-        elif password is None:
+        elif creds is None:
             log(f"Error: No credentials found for {service_id}. Ensure the API token is stored in Windows Credential Manager.")
             sys.exit(1)
         else:
-            return password.password
+            return creds.username, creds.password
     except keyring.errors.KeyringError as e: 
         log(f"Error retrieving credentials for {service_id}: {e}")
         sys.exit(1)
 
 # Load the config file and verify the json syntax is correct
-def load_config(file):
+def load_config(file: str) -> None:
     try: 
-        return json.load(open('config.json', 'r'))
+        return json.load(open(file, 'r'))
     except json.JSONDecodeError:
         print('Error: config.json syntax incorrect!')
         sys.exit(1)
     except FileNotFoundError:
-        log("Error: unable to load config.json file!")
+        print("Error: unable to load config.json file!")
         sys.exit(1)
         
 # Create the log file
-def create_log_file(filename):
+def create_log_file(filename: str, config_params: dict) -> TextIO:
     try:
         # Make sure the path to the log file was defined
         if 'log_file_path' not in config_params:
@@ -67,7 +80,7 @@ def create_log_file(filename):
         sys.exit(1)
         
 # Make sure all the required parameters are in config.json    
-def validate_config_params(config_params, required_params):
+def validate_config_params(config_params: dict, required_params: str) -> None:
     try:
         # Make sure all the required keys are present and assigned a value
         missing_params = []
@@ -86,7 +99,7 @@ def validate_config_params(config_params, required_params):
         sys.exit(1)
 
 # Pull a list of MISP iocs that have been published in the past X hours
-def get_misp_iocs():
+def get_misp_iocs() -> dict:
     try:
         #Check if a custom filter was defined in the config
         if config_params['filter'] == "":
@@ -117,7 +130,7 @@ def get_misp_iocs():
         sys.exit(1)
    
 # Make sure the URL format is valid    
-def is_valid_url(url: str) -> bool:
+def is_valid_format(url: str) -> bool:
     try:
         # Define the regex pattern for a valid URL
         url_pattern = re.compile(
@@ -140,13 +153,13 @@ def is_valid_url(url: str) -> bool:
     except: return False
 
 # Check make sure the IOCs were formatted correctly and were not tagged for retraction
-def validate(attributes):
+def validate(attributes: dict) -> list:
     iocs = []
 
     for attribute in attributes:
         #Make sure the attribute's syntax or formatting is correct before futher processing
         valid = True
-        if not is_valid_url(attribute['value']):
+        if not is_valid_format(attribute['value']):
             valid = False
             log(f"Removing illegal attribute: {attribute['value']}")
         
@@ -164,7 +177,7 @@ def validate(attributes):
     return iocs
     
 # Display common error code descriptions
-def api_error_code(code):
+def api_error_code(code: int) -> str:
     codes = {
         400: 'Bad Request: Request cannot be processed by the API',
         401: 'Not Authorized: Request without successful login session',
@@ -182,7 +195,7 @@ def api_error_code(code):
         return f'{code}: unknown error code'
 
 # Display some helpful stats       
-def show_stats(iocs):
+def show_stats(iocs: list) -> None:
     log('Some helpful stats:')
     log(f'  Total iocs: {len(iocs)}')
     counter = 0
@@ -195,12 +208,18 @@ def show_stats(iocs):
 class vendor:
     def __init__(self):
         self.required_config_params = ['fg_path', 'fg_wcm_id', 'fg_vdom', 'misp_path', 'misp_wcm_id', 'last', 'type', 'filter', 'exclude']
+        self.username = ""
+        self.password = ""
+        self.wcm_service_id = ""
         self.api_token = ""
         self.api_root = ""
         self.api_endpoint = "cmdb/webfilter/ftgd-local-rating"
         self.api_header = ""
         self.api_query_params = ""
         self.api_body = ""
+    
+    def update_api_token(self):
+        self.api_token = self.password
         
     def update_api_header(self):
         self.api_header = {
@@ -224,7 +243,7 @@ class vendor:
         
     def add_ioc(self):
         return requests.post(f'{self.api_root}/{self.api_endpoint}', headers=self.api_header, params=self.api_query_params, json=self.api_body, verify=False)
-       
+
 # Retrieve the config file parameters        
 config_params = load_config('config.json')
         
@@ -232,13 +251,13 @@ config_params = load_config('config.json')
 if not isinstance(config_params, dict):
     log("Error: configuration file structure is invalid!")
     sys.exit(1)
-
+    
 # Get todays date in YYYYMMDD format
 today = datetime.today()
 today = today.strftime('%Y%m%d')
 
 # Try to create the log file using YYYYMMDD as the filename 
-with create_log_file(today) as log_file:
+with create_log_file(today, config_params) as log_file:
     # Log the current date and time
     log(datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
     
@@ -250,13 +269,14 @@ with create_log_file(today) as log_file:
         
     #API Gateway configurtion
     vendor_params.api_root = config_params['fg_path']
-    vendor_params.api_token = get_creds(config_params['fg_wcm_id'])
+    vendor_params.username, vendor_params.password = get_creds(config_params['fg_wcm_id'])
+    vendor_params.update_api_token()
     vendor_params.update_api_header()
 
 
     # MISP configuration
     misp_url = config_params['misp_path']
-    misp_key = get_creds(config_params['misp_wcm_id'])
+    misp_key = get_creds(config_params['misp_wcm_id'])[1]
     misp_headers = {
         'Authorization': misp_key,
         'Accept': 'application/json'
